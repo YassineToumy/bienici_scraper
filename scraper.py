@@ -27,7 +27,6 @@ class BieniciScraper:
         self.delay = int(os.getenv('DELAY_BETWEEN_REQUESTS', 2))
         self.max_pages = int(os.getenv('MAX_PAGES', 100))
         self.items_per_page = int(os.getenv('ITEMS_PER_PAGE', 100))
-        self.max_from = 2400  # Limite de l'API Bienici
         
         # Statistiques
         self.stats = {
@@ -215,6 +214,21 @@ class BieniciScraper:
             'garagesQuantity': data.get('garagesQuantity'),
             'boxQuantity': data.get('boxQuantity'),
             
+            # === ÉQUIPEMENTS PROFESSIONNELS ===
+            'hasCafeteria': data.get('hasCafeteria'),
+            'hasCleaningService': data.get('hasCleaningService'),
+            'hasConvenienceALS': data.get('hasConvenienceALS'),
+            'hasConvenienceLunch': data.get('hasConvenienceLunch'),
+            'hasCopyMachine': data.get('hasCopyMachine'),
+            'hasFreeInternet': data.get('hasFreeInternet'),
+            'hasFreeOpticFiberInternet': data.get('hasFreeOpticFiberInternet'),
+            'hasLinenService': data.get('hasLinenService'),
+            'hasManager': data.get('hasManager'),
+            'hasMeetingRoom': data.get('hasMeetingRoom'),
+            'hasPhonePoint': data.get('hasPhonePoint'),
+            'hasTelevision': data.get('hasTelevision'),
+            'hasWashingMachine': data.get('hasWashingMachine'),
+            
             # === MÉDIAS ===
             'photos': data.get('photos', []),
             'photosCount': data.get('photosCount'),
@@ -232,6 +246,9 @@ class BieniciScraper:
             'contactPhone': data.get('contactPhone'),
             'contactEmail': data.get('contactEmail'),
             'showContactForm': data.get('showContactForm'),
+            
+            # === DIAGNOSTICS ===
+            'diagnostics': data.get('diagnostics', []),
             
             # === DIVERS ===
             'status': data.get('status'),
@@ -311,15 +328,16 @@ class BieniciScraper:
             print(f"\n📦 Scraping {property_type}...")
             
             from_index = 0
+            has_more = True
             page_num = 1
             consecutive_errors = 0
             max_consecutive_errors = 3
             
-            while page_num <= self.max_pages:
-                # Limite de l'API: 2500 résultats max avec "from"
-                if from_index >= self.max_from:
+            while has_more and page_num <= self.max_pages:
+                # MODIFICATION: Vérifier la limite de l'API (2400 est une marge de sécurité)
+                if from_index >= 2400:
                     print(f"\n  ⚠️  Limite API atteinte (from={from_index})")
-                    print(f"  💡 Passez au type de bien suivant ou ajoutez des filtres géographiques")
+                    print(f"  💡 Passage au type de bien suivant")
                     break
                 
                 filters = {
@@ -341,14 +359,16 @@ class BieniciScraper:
                     consecutive_errors += 1
                     print(f"❌ Erreur ({consecutive_errors}/{max_consecutive_errors})")
                     
+                    # MODIFICATION: Arrêter après 3 erreurs consécutives
                     if consecutive_errors >= max_consecutive_errors:
-                        print(f"\n  ⚠️  Trop d'erreurs consécutives, arrêt du scraping pour {property_type}")
+                        print(f"\n  ⚠️  Trop d'erreurs consécutives, arrêt")
                         break
                     
-                    time.sleep(self.delay * 2)  # Double délai après erreur
+                    # MODIFICATION: Attendre plus longtemps après une erreur
+                    time.sleep(self.delay * 2)
                     continue
                 
-                # Réinitialiser le compteur d'erreurs
+                # Réinitialiser le compteur d'erreurs après un succès
                 consecutive_errors = 0
                 
                 annonces = response.get('realEstateAds', [])
@@ -373,14 +393,9 @@ class BieniciScraper:
                 
                 from_index += len(annonces)
                 
-                # Vérifier si on a tout récupéré
                 if from_index >= total:
                     print(f"  ✅ Terminé: {from_index}/{total}")
                     break
-                
-                # Vérifier si on approche de la limite
-                if from_index + self.items_per_page > self.max_from:
-                    print(f"  ⚠️  Approche de la limite API (from={from_index})")
                 
                 page_num += 1
                 time.sleep(self.delay)
