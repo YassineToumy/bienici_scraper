@@ -25,22 +25,12 @@ class BieniciScraper:
         # Configuration Scraper
         self.api_url = os.getenv('BIENICI_API_URL', 'https://www.bienici.com/realEstateAds.json')
         self.delay = int(os.getenv('DELAY_BETWEEN_REQUESTS', 2))
-        self.max_pages = int(os.getenv('MAX_PAGES', 100))
+        self.max_pages = int(os.getenv('MAX_PAGES', 10000))  # Très grand pour scraper tout
         self.items_per_page = int(os.getenv('ITEMS_PER_PAGE', 100))
         
-        # Départements français (métropole)
-        self.departments = [
-            "01", "02", "03", "04", "05", "06", "07", "08", "09", "10",
-            "11", "12", "13", "14", "15", "16", "17", "18", "19", "21",
-            "22", "23", "24", "25", "26", "27", "28", "29", "2A", "2B",
-            "30", "31", "32", "33", "34", "35", "36", "37", "38", "39",
-            "40", "41", "42", "43", "44", "45", "46", "47", "48", "49",
-            "50", "51", "52", "53", "54", "55", "56", "57", "58", "59",
-            "60", "61", "62", "63", "64", "65", "66", "67", "68", "69",
-            "70", "71", "72", "73", "74", "75", "76", "77", "78", "79",
-            "80", "81", "82", "83", "84", "85", "86", "87", "88", "89",
-            "90", "91", "92", "93", "94", "95"
-        ]
+        # Configuration pause
+        self.pause_every = 2000  # Pause tous les 2000 annonces
+        self.pause_duration = 300  # Pause de 5 minutes (300 secondes)
         
         # Statistiques
         self.stats = {
@@ -332,89 +322,98 @@ class BieniciScraper:
             'skipped': skipped
         }
     
-    def scrape_with_department_filter(self, filter_type: str, property_type: str, department: str):
-        """Scraper un département spécifique"""
-        
-        from_index = 0
-        page_num = 1
-        consecutive_errors = 0
-        max_consecutive_errors = 3
-        
-        while page_num <= self.max_pages:
-            # Limite de l'API: 2400 par filtre
-            if from_index >= 2400:
-                print(f"      ⚠️  Limite API département {department}")
-                break
-            
-            filters = {
-                "size": self.items_per_page,
-                "from": from_index,
-                "filterType": filter_type,
-                "propertyType": [property_type],
-                "page": page_num,
-                "sortBy": "publicationDate",
-                "sortOrder": "desc",
-                "onTheMarket": [True],
-                "zoneIdsByTypes": {
-                    "zoneIds": [f"{department}-"]
-                }
-            }
-            
-            response = self.fetch_annonces(filters)
-            
-            if not response:
-                consecutive_errors += 1
-                if consecutive_errors >= max_consecutive_errors:
-                    print(f"      ❌ Trop d'erreurs département {department}")
-                    break
-                time.sleep(self.delay * 2)
-                continue
-            
-            consecutive_errors = 0
-            annonces = response.get('realEstateAds', [])
-            total = response.get('total', 0)
-            
-            if not annonces or total == 0:
-                break
-            
-            result = self.save_annonces(annonces)
-            
-            self.stats['total_scraped'] += len(annonces)
-            self.stats['inserted'] += result['inserted']
-            self.stats['updated'] += result['updated']
-            self.stats['skipped'] += result['skipped']
-            
-            print(f"      📄 Page {page_num}: {len(annonces)} annonces "
-                  f"(🆕 {result['inserted']}, 🔄 {result['updated']}) "
-                  f"- {from_index + len(annonces)}/{total}", flush=True)
-            
-            from_index += len(annonces)
-            
-            if from_index >= total:
-                break
-            
-            page_num += 1
-            time.sleep(self.delay)
-    
     def scrape_with_filters(self, filter_type: str, property_types: List[str]):
-        """Scraper les annonces avec des filtres par département"""
+        """Scraper les annonces avec des filtres spécifiques"""
         print(f"\n{'='*60}")
         print(f"🚀 Début du scraping: {filter_type.upper()} - {property_types}")
-        print(f"   Stratégie: Scraping par département (96 départements)")
+        print(f"⏸️  Stratégie: Pause de {self.pause_duration}s tous les {self.pause_every} annonces")
         print(f"{'='*60}\n")
         
         for property_type in property_types:
             print(f"\n📦 Scraping {property_type}...")
             
-            for i, dept in enumerate(self.departments, 1):
-                print(f"  📍 Département {dept} ({i}/{len(self.departments)})...")
-                self.scrape_with_department_filter(filter_type, property_type, dept)
+            from_index = 0
+            has_more = True
+            page_num = 1
+            consecutive_errors = 0
+            max_consecutive_errors = 3
+            annonces_since_pause = 0  # Compteur pour la pause
+            
+            while has_more and page_num <= self.max_pages:
+                filters = {
+                    "size": self.items_per_page,
+                    "from": from_index,
+                    "filterType": filter_type,
+                    "propertyType": [property_type],
+                    "page": page_num,
+                    "sortBy": "publicationDate",
+                    "sortOrder": "desc",
+                    "onTheMarket": [True]
+                }
                 
-                # Stats intermédiaires tous les 10 départements
-                if i % 10 == 0:
+                print(f"  📄 Page {page_num} (index: {from_index})... ", end='', flush=True)
+                
+                response = self.fetch_annonces(filters)
+                
+                if not response:
+                    consecutive_errors += 1
+                    print(f"❌ Erreur ({consecutive_errors}/{max_consecutive_errors})")
+                    
+                    if consecutive_errors >= max_consecutive_errors:
+                        print(f"\n  ⚠️  Trop d'erreurs consécutives, arrêt")
+                        break
+                    
+                    time.sleep(self.delay * 2)
+                    continue
+                
+                # Réinitialiser le compteur d'erreurs après un succès
+                consecutive_errors = 0
+                
+                annonces = response.get('realEstateAds', [])
+                total = response.get('total', 0)
+                
+                if not annonces:
+                    print(f"✅ Aucune annonce")
+                    break
+                
+                result = self.save_annonces(annonces)
+                
+                self.stats['total_scraped'] += len(annonces)
+                self.stats['inserted'] += result['inserted']
+                self.stats['updated'] += result['updated']
+                self.stats['skipped'] += result['skipped']
+                
+                annonces_since_pause += len(annonces)
+                
+                print(f"✅ {len(annonces)} annonces "
+                      f"(🆕 {result['inserted']}, "
+                      f"🔄 {result['updated']}, "
+                      f"⭐️ {result['skipped']}) "
+                      f"- {from_index + len(annonces)}/{total}")
+                
+                from_index += len(annonces)
+                
+                if from_index >= total:
+                    print(f"  ✅ Terminé: {from_index}/{total}")
+                    break
+                
+                # PAUSE TOUS LES 2000 ANNONCES
+                if annonces_since_pause >= self.pause_every:
                     total_db = self.collection.count_documents({})
-                    print(f"\n  📊 Progression: {i}/{len(self.departments)} départements")
-                    print(f"     Total en DB: {total_db} annonces\n")
+                    print(f"\n  ⏸️  PAUSE - {annonces_since_pause} annonces scrapées")
+                    print(f"  💾 Total en DB: {total_db}")
+                    print(f"  ⏳ Attente de {self.pause_duration}s ({self.pause_duration//60}min)...")
+                    
+                    # Countdown pour la pause
+                    for remaining in range(self.pause_duration, 0, -30):
+                        print(f"     ⏰ {remaining}s restantes...", end='\r', flush=True)
+                        time.sleep(30)
+                    
+                    print(f"\n  ▶️  Reprise du scraping!\n")
+                    annonces_since_pause = 0  # Reset compteur
+                
+                page_num += 1
+                time.sleep(self.delay)
     
     def scrape_all(self):
         """Scraper toutes les annonces de vente"""
@@ -422,7 +421,6 @@ class BieniciScraper:
         
         print("\n" + "="*60)
         print("🏠 SCRAPER BIENICI - ANNONCES DE VENTE")
-        print("🌍 Mode: SCRAPING COMPLET (tous départements)")
         print("="*60)
         
         self.scrape_with_filters(
