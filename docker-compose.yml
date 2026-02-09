@@ -1,19 +1,65 @@
-mongodb:
-  image: mongo:7.0
-  container_name: bienici-mongodb
-  restart: unless-stopped
-  environment:
-    MONGO_INITDB_DATABASE: bienici
-  # ❌ SUPPRIMEZ cette ligne :
-  # ports:
-  #   - "27017:27017"
-  volumes:
-    - mongodb_data:/data/db
-    - mongodb_config:/data/configdb
-  networks:
-    - bienici-network
-  healthcheck:
-    test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-    interval: 10s
-    timeout: 5s
-    retries: 5
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: bienici-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: bienici
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    networks:
+      - bienici-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bienici-scraper
+    restart: unless-stopped
+    environment:
+      MONGODB_URI: mongodb://mongodb:27017
+      MONGODB_DATABASE: bienici
+      BIENICI_API_URL: https://www.bienici.com/realEstateAds.json
+      DELAY_BETWEEN_REQUESTS: 2
+      MAX_PAGES: 100
+      ITEMS_PER_PAGE: 100
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - bienici-network
+    command: python scraper.py
+
+  cleaner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bienici-cleaner
+    restart: "no"
+    environment:
+      MONGODB_URI: mongodb://mongodb:27017
+      MONGODB_DATABASE: bienici
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - bienici-network
+    command: python cleaner.py
+    profiles:
+      - tools
+
+volumes:
+  mongodb_data:
+    driver: local
+  mongodb_config:
+    driver: local
+
+networks:
+  bienici-network:
+    driver: bridge
