@@ -20,7 +20,7 @@ class BieniciScraper:
         self.db_name = os.getenv('MONGODB_DATABASE', 'bienici_scraper')
         self.client = MongoClient(self.mongo_uri)
         self.db = self.client[self.db_name]
-        self.collection = self.db['annonces']
+        self.collection = self.db['locations']  # Collection pour les locations
         
         # Configuration Scraper
         self.api_url = os.getenv('BIENICI_API_URL', 'https://www.bienici.com/realEstateAds.json')
@@ -416,15 +416,15 @@ class BieniciScraper:
                 time.sleep(self.delay)
     
     def scrape_all(self):
-        """Scraper toutes les annonces de vente"""
+        """Scraper toutes les annonces de location"""
         start_time = time.time()
         
         print("\n" + "="*60)
-        print("🏠 SCRAPER BIENICI - ANNONCES DE VENTE")
+        print("🏠 SCRAPER BIENICI - ANNONCES DE LOCATION")
         print("="*60)
         
         self.scrape_with_filters(
-            filter_type='buy',
+            filter_type='rent',
             property_types=['flat', 'house']
         )
         
