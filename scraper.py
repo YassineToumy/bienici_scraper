@@ -13,20 +13,21 @@ import json
 
 load_dotenv()
 
-class BieniciScraperLocations:
+class BieniciScraper:
     def __init__(self):
         # Configuration MongoDB
         self.mongo_uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017')
-        self.db_name = os.getenv('MONGODB_DATABASE', 'bienici')
+        self.db_name = os.getenv('MONGODB_DATABASE', 'bienici_scraper')
         self.client = MongoClient(self.mongo_uri)
         self.db = self.client[self.db_name]
-        self.collection = self.db['locations']  # Collection séparée pour locations
+        self.collection = self.db['annonces']
         
         # Configuration Scraper
         self.api_url = os.getenv('BIENICI_API_URL', 'https://www.bienici.com/realEstateAds.json')
         self.delay = int(os.getenv('DELAY_BETWEEN_REQUESTS', 2))
         self.max_pages = int(os.getenv('MAX_PAGES', 100))
         self.items_per_page = int(os.getenv('ITEMS_PER_PAGE', 100))
+        self.max_from = 2400  # Limite de l'API Bienici
         
         # Statistiques
         self.stats = {
@@ -72,18 +73,12 @@ class BieniciScraperLocations:
         self.collection.create_index([('price', ASCENDING)])
         self.collection.create_index([('adType', ASCENDING)])
         self.collection.create_index([('publicationDate', ASCENDING)])
-        self.collection.create_index([('isFurnished', ASCENDING)])
         
-        # Index composés pour locations
+        # Index composés
         self.collection.create_index([
             ('city', ASCENDING),
             ('propertyType', ASCENDING),
             ('price', ASCENDING)
-        ])
-        
-        self.collection.create_index([
-            ('price', ASCENDING),
-            ('surfaceArea', ASCENDING)
         ])
         
         print("  ✅ Index de recherche créés\n")
@@ -92,10 +87,9 @@ class BieniciScraperLocations:
         """Récupérer les annonces depuis l'API Bienici"""
         
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'application/json',
             'Accept-Language': 'fr-FR,fr;q=0.9',
-            'Referer': 'https://www.bienici.com',
         }
         
         params = {
@@ -117,43 +111,8 @@ class BieniciScraperLocations:
             self.stats['errors'] += 1
             return None
     
-    def extract_district_info(self, district_data):
-        """Extraire les informations du district"""
-        if not district_data:
-            return {}
-        
-        if isinstance(district_data, dict):
-            return {
-                'district_name': district_data.get('name'),
-                'district_libelle': district_data.get('libelle'),
-                'district_id_polygone': district_data.get('id_polygone'),
-                'district_insee_code': district_data.get('insee_code'),
-            }
-        return {}
-    
-    def extract_blur_info(self, blur_data):
-        """Extraire les informations de géolocalisation floue"""
-        if not blur_data:
-            return {}
-        
-        result = {}
-        if isinstance(blur_data, dict):
-            position = blur_data.get('position', {})
-            if position:
-                result['blur_latitude'] = position.get('lat')
-                result['blur_longitude'] = position.get('lon')
-        
-        return result
-    
     def prepare_annonce(self, data: Dict) -> Dict:
-        """Préparer et nettoyer les données d'une annonce de location"""
-        
-        # Extraire district info
-        district_info = self.extract_district_info(data.get('district'))
-        
-        # Extraire blur info (position floue)
-        blur_info = self.extract_blur_info(data.get('blurInfo'))
-        
+        """Préparer et nettoyer les données d'une annonce"""
         prepared = {
             # === IDENTIFICATION ===
             'id': data.get('id'),
@@ -165,20 +124,29 @@ class BieniciScraperLocations:
             # === LOCALISATION ===
             'city': data.get('city'),
             'postalCode': data.get('postalCode'),
-            'departmentCode': data.get('departmentCode'),
-            'addressKnown': data.get('addressKnown'),
-            'displayDistrictName': data.get('displayDistrictName'),
+            'district': data.get('district'),
+            'country': data.get('country'),
+            'id_polygone': data.get('id_polygone'),
+            'location': data.get('location'),
+            'insee_code': data.get('insee_code'),
+            'code_insee': data.get('code_insee'),
+            'latitude': data.get('latitude'),
+            'longitude': data.get('longitude'),
             
-            # === PRIX LOCATION (champ "price" dans l'API pour les locations) ===
-            'price': data.get('price'),  # Prix mensuel de location
+            # === PRIX ===
+            'price': data.get('price'),
+            'rentalPrice': data.get('rentalPrice'),
+            'pricePerSquareMeter': data.get('pricePerSquareMeter'),
+            'priceHasDecreased': data.get('priceHasDecreased'),
+            'priceEvolution': data.get('priceEvolution'),
+            
+            # === CHARGES ===
             'agencyRentalFee': data.get('agencyRentalFee'),
             'safetyDeposit': data.get('safetyDeposit'),
             'charges': data.get('charges'),
             'chargesIncluded': data.get('chargesIncluded'),
-            'chargesMethod': data.get('chargesMethod'),
-            'rentExtra': data.get('rentExtra'),
-            'inventoryOfFixturesFees': data.get('inventoryOfFixturesFees'),
-            'pricePerSquareMeter': data.get('pricePerSquareMeter'),
+            'tenantFees': data.get('tenantFees'),
+            'tenantFeesPercentage': data.get('tenantFeesPercentage'),
             
             # === CARACTÉRISTIQUES ===
             'propertyType': data.get('propertyType'),
@@ -191,12 +159,12 @@ class BieniciScraperLocations:
             'toiletQuantity': data.get('toiletQuantity'),
             'floor': data.get('floor'),
             'floorQuantity': data.get('floorQuantity'),
-            'terracesQuantity': data.get('terracesQuantity'),
             
             # === ÉTAT ===
             'newProperty': data.get('newProperty'),
             'yearOfConstruction': data.get('yearOfConstruction'),
             'condition': data.get('condition'),
+            'isUnderCompromise': data.get('isUnderCompromise'),
             'isFurnished': data.get('isFurnished'),
             'isStudio': data.get('isStudio'),
             
@@ -204,13 +172,14 @@ class BieniciScraperLocations:
             'publicationDate': data.get('publicationDate'),
             'modificationDate': data.get('modificationDate'),
             'availableDate': data.get('availableDate'),
+            'closingDate': data.get('closingDate'),
+            'expirationDate': data.get('expirationDate'),
             
             # === TYPE ===
             'adType': data.get('adType'),
             'transactionType': data.get('transactionType'),
             'adTypeFR': data.get('adTypeFR'),
             'accountType': data.get('accountType'),
-            'accountDisplayName': data.get('accountDisplayName'),
             'adCreatedByPro': data.get('adCreatedByPro'),
             
             # === ÉQUIPEMENTS EXTÉRIEURS ===
@@ -226,6 +195,8 @@ class BieniciScraperLocations:
             'hasSeparateToilet': data.get('hasSeparateToilet'),
             'hasIntercom': data.get('hasIntercom'),
             'hasElevator': data.get('hasElevator'),
+            'hasConservatory': data.get('hasConservatory'),
+            'hasTwoWheelersRoom': data.get('hasTwoWheelersRoom'),
             'hasFireplace': data.get('hasFireplace'),
             'hasAirConditioning': data.get('hasAirConditioning'),
             'hasDisabledAccess': data.get('hasDisabledAccess'),
@@ -237,63 +208,54 @@ class BieniciScraperLocations:
             'greenhouseGazValue': data.get('greenhouseGazValue'),
             'heating': data.get('heating'),
             'heatingType': data.get('heatingType'),
-            'energyPerformanceDiagnosticDate': data.get('energyPerformanceDiagnosticDate'),
-            'useJuly2021EnergyPerformanceDiagnostic': data.get('useJuly2021EnergyPerformanceDiagnostic'),
-            'minEnergyConsumption': data.get('minEnergyConsumption'),
-            'maxEnergyConsumption': data.get('maxEnergyConsumption'),
-            'epdFinalEnergyConsumption': data.get('epdFinalEnergyConsumption'),
+            'exposition': data.get('exposition'),
             
             # === PARKING ===
             'parkingPlacesQuantity': data.get('parkingPlacesQuantity'),
             'garagesQuantity': data.get('garagesQuantity'),
+            'boxQuantity': data.get('boxQuantity'),
             
             # === MÉDIAS ===
             'photos': data.get('photos', []),
-            'photosCount': len(data.get('photos', [])),
+            'photosCount': data.get('photosCount'),
             'virtualTour': data.get('virtualTour'),
-            'with3dModel': data.get('with3dModel'),
+            'videoUrl': data.get('videoUrl'),
             
             # === AGENCE ===
+            'agency': data.get('agency'),
             'agencyId': data.get('agencyId'),
             'agencyName': data.get('agencyName'),
+            'agencyLogo': data.get('agencyLogo'),
             'agencyPhone': data.get('agencyPhone'),
-            'agencyFeeUrl': data.get('agencyFeeUrl'),
             
             # === CONTACT ===
             'contactPhone': data.get('contactPhone'),
+            'contactEmail': data.get('contactEmail'),
             'showContactForm': data.get('showContactForm'),
-            'customerId': data.get('customerId'),
-            'nothingBehindForm': data.get('nothingBehindForm'),
-            'highlightMailContact': data.get('highlightMailContact'),
-            
-            # === STATUT ===
-            'status': data.get('status'),
-            'priceHasDecreased': data.get('priceHasDecreased'),
-            'isBienIciExclusive': data.get('isBienIciExclusive'),
-            'endOfPromotedAsExclusive': data.get('endOfPromotedAsExclusive'),
             
             # === DIVERS ===
-            'hasGeorisquesMention': data.get('hasGeorisquesMention'),
-            'opticalFiberStatus': data.get('opticalFiberStatus'),
-            'displayInsuranceEstimation': data.get('displayInsuranceEstimation'),
-            'descriptionTextLength': data.get('descriptionTextLength'),
+            'status': data.get('status'),
+            'tags': data.get('tags', []),
+            'isFavorite': data.get('isFavorite'),
+            'isExclusive': data.get('isExclusive'),
+            'isNew': data.get('isNew'),
+            'isPremium': data.get('isPremium'),
+            'isUrgent': data.get('isUrgent'),
+            'viewsCount': data.get('viewsCount'),
+            'contactsCount': data.get('contactsCount'),
             
             # === MÉTADONNÉES ===
             'scraped_at': datetime.utcnow(),
             'updated_at': datetime.utcnow(),
         }
         
-        # Ajouter les infos du district
-        prepared.update(district_info)
-        
-        # Ajouter les infos de blur (position floue)
-        prepared.update(blur_info)
-        
         # Supprimer les None
         return {k: v for k, v in prepared.items() if v is not None}
     
     def save_annonces(self, annonces: List[Dict]) -> Dict:
-        """Sauvegarder les annonces de location"""
+        """
+        Sauvegarder les annonces une par une pour gérer les doublons
+        """
         if not annonces:
             return {'inserted': 0, 'updated': 0, 'skipped': 0}
         
@@ -307,16 +269,6 @@ class BieniciScraperLocations:
                 annonce_id = prepared.get('id')
                 
                 if not annonce_id:
-                    skipped += 1
-                    continue
-                
-                # Vérifier si price existe et est valide (pour les locations)
-                if not prepared.get('price') or prepared.get('price') <= 0:
-                    skipped += 1
-                    continue
-                
-                # Vérifier que c'est bien une location
-                if prepared.get('adType') != 'rent':
                     skipped += 1
                     continue
                 
@@ -337,6 +289,7 @@ class BieniciScraperLocations:
                     inserted += 1
                     
             except DuplicateKeyError:
+                # Doublon détecté (race condition possible)
                 skipped += 1
             except Exception as e:
                 print(f"\n  ⚠️  Erreur annonce {annonce.get('id')}: {str(e)[:100]}")
@@ -348,24 +301,31 @@ class BieniciScraperLocations:
             'skipped': skipped
         }
     
-    def scrape_with_filters(self, property_types: List[str]):
-        """Scraper les locations avec des filtres spécifiques"""
+    def scrape_with_filters(self, filter_type: str, property_types: List[str]):
+        """Scraper les annonces avec des filtres spécifiques"""
         print(f"\n{'='*60}")
-        print(f"🏠 Scraping LOCATIONS - {property_types}")
+        print(f"🚀 Début du scraping: {filter_type.upper()} - {property_types}")
         print(f"{'='*60}\n")
         
         for property_type in property_types:
-            print(f"\n📦 Scraping {property_type} en location...")
+            print(f"\n📦 Scraping {property_type}...")
             
             from_index = 0
-            has_more = True
             page_num = 1
+            consecutive_errors = 0
+            max_consecutive_errors = 3
             
-            while has_more and page_num <= self.max_pages:
+            while page_num <= self.max_pages:
+                # Limite de l'API: 2500 résultats max avec "from"
+                if from_index >= self.max_from:
+                    print(f"\n  ⚠️  Limite API atteinte (from={from_index})")
+                    print(f"  💡 Passez au type de bien suivant ou ajoutez des filtres géographiques")
+                    break
+                
                 filters = {
                     "size": self.items_per_page,
                     "from": from_index,
-                    "filterType": "rent",  # 🔥 LOCATION
+                    "filterType": filter_type,
                     "propertyType": [property_type],
                     "page": page_num,
                     "sortBy": "publicationDate",
@@ -378,8 +338,18 @@ class BieniciScraperLocations:
                 response = self.fetch_annonces(filters)
                 
                 if not response:
-                    print("❌ Pas de réponse")
-                    break
+                    consecutive_errors += 1
+                    print(f"❌ Erreur ({consecutive_errors}/{max_consecutive_errors})")
+                    
+                    if consecutive_errors >= max_consecutive_errors:
+                        print(f"\n  ⚠️  Trop d'erreurs consécutives, arrêt du scraping pour {property_type}")
+                        break
+                    
+                    time.sleep(self.delay * 2)  # Double délai après erreur
+                    continue
+                
+                # Réinitialiser le compteur d'erreurs
+                consecutive_errors = 0
                 
                 annonces = response.get('realEstateAds', [])
                 total = response.get('total', 0)
@@ -398,28 +368,33 @@ class BieniciScraperLocations:
                 print(f"✅ {len(annonces)} annonces "
                       f"(🆕 {result['inserted']}, "
                       f"🔄 {result['updated']}, "
-                      f"⏭️  {result['skipped']}) "
+                      f"⭐️ {result['skipped']}) "
                       f"- {from_index + len(annonces)}/{total}")
                 
                 from_index += len(annonces)
                 
+                # Vérifier si on a tout récupéré
                 if from_index >= total:
                     print(f"  ✅ Terminé: {from_index}/{total}")
                     break
                 
+                # Vérifier si on approche de la limite
+                if from_index + self.items_per_page > self.max_from:
+                    print(f"  ⚠️  Approche de la limite API (from={from_index})")
+                
                 page_num += 1
                 time.sleep(self.delay)
     
-    def scrape_all_rentals(self):
-        """Scraper toutes les locations"""
+    def scrape_all(self):
+        """Scraper toutes les annonces de vente"""
         start_time = time.time()
         
         print("\n" + "="*60)
-        print("🏠 SCRAPER BIENICI - ANNONCES DE LOCATION")
+        print("🏠 SCRAPER BIENICI - ANNONCES DE VENTE")
         print("="*60)
         
-        # Scraper appartements et maisons en location
         self.scrape_with_filters(
+            filter_type='buy',
             property_types=['flat', 'house']
         )
         
@@ -442,35 +417,7 @@ class BieniciScraperLocations:
         
         # Stats MongoDB
         total_db = self.collection.count_documents({})
-        
-        # Prix moyen
-        avg_result = list(self.collection.aggregate([
-            {'$group': {'_id': None, 'avg': {'$avg': '$price'}}}
-        ]))
-        
-        # Par type de bien
-        by_type = list(self.collection.aggregate([
-            {'$group': {'_id': '$propertyType', 'count': {'$sum': 1}}}
-        ]))
-        
-        # Par meublé/non meublé
-        furnished = self.collection.count_documents({'isFurnished': True})
-        unfurnished = self.collection.count_documents({'isFurnished': False})
-        
-        print(f"\n  📊 Base de données:")
-        print(f"     Total locations:  {total_db}")
-        if avg_result and avg_result[0].get('avg'):
-            print(f"     Prix moyen:       {avg_result[0]['avg']:.2f}€/mois")
-        
-        if by_type:
-            print(f"\n  📊 Par type:")
-            for item in by_type:
-                print(f"     {item['_id']}: {item['count']}")
-        
-        print(f"\n  📊 Meublé:")
-        print(f"     Meublé:     {furnished}")
-        print(f"     Non meublé: {unfurnished}")
-        
+        print(f"\n  Total en DB:      {total_db}")
         print("="*60 + "\n")
     
     def close(self):
@@ -480,10 +427,10 @@ class BieniciScraperLocations:
 
 def main():
     """Point d'entrée principal"""
-    scraper = BieniciScraperLocations()
+    scraper = BieniciScraper()
     
     try:
-        scraper.scrape_all_rentals()
+        scraper.scrape_all()
     except KeyboardInterrupt:
         print("\n\n⚠️  Scraping interrompu")
     except Exception as e:
