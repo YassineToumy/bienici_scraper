@@ -146,7 +146,8 @@ class BieniciScraper:
             "sortBy": "publicationDate",
             "sortOrder": "desc",
             "onTheMarket": [True],
-            "price": {"min": price_min, "max": price_max},
+            "minPrice": price_min,
+            "maxPrice": price_max,
         }
         resp = self.fetch(filters)
         if resp:
@@ -215,7 +216,8 @@ class BieniciScraper:
                 "sortBy": "publicationDate",
                 "sortOrder": "desc",
                 "onTheMarket": [True],
-                "price": {"min": price_min, "max": price_max},
+                "minPrice": price_min,
+                "maxPrice": price_max,
             }
 
             resp = self.fetch(filters)
